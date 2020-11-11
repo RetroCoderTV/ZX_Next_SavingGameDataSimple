@@ -1,0 +1,5 @@
+'Game Design Document' v0.01
+
+Limits:
+    Max sprite size 32x32
+    

@@ -1,0 +1,1176 @@
+# file opened: src/main.asm
+  1   0000
+  2   0000                  OPT --syntax=abfw     ; recommended sub-syntax of current sjasmplus
+  3   0000                  ; "a" - multi-arguments for instructions require double-comma, i.e. `push hl,,de,,bc`
+  4   0000                  ;     - this helps to avoid common pitfalls like `sub a,a` becoming 2x `sub a` in default syntax
+  5   0000                  ;     - making it single "sub a from a" and enabling non-Zilog syntax `sub a,...`
+  6   0000                  ; "b" - whole expression parentheses are legal for memory access only
+  7   0000                  ;     - things like "ld b,(variable)" will become errors, as there's only ld b,immediate
+  8   0000                  ;     - for regular expression parentheses you can disambiguate `ld b,+(1+2+3)` by unary +
+  9   0000                  ; "f" - warn about fake instructions of sjasmplus (if used by accident)
+ 10   0000                  ;     - to use them intentionally, use comment to suppress warning: `ld hl,de ; fake`
+ 11   0000                  ;     - one extra warning from this class is Z80N extension `mul`, requiring explicit argument `mul de` or `mul d,e`
+ 12   0000                  ; "w" - report warnings as errors
+ 13   0000
+ 14   0000                  org 0x8000
+ 15   8000
+ 16   8000                  DEVICE ZXSPECTRUMNEXT
+ 17   8000              	CSPECTMAP main.map
+ 18   8000
+ 19   8000
+ 20   8000              start:
+ 21   8000              	; di
+ 22   8000 31 FE 7F     	ld sp,$7ffe
+ 23   8003 ED 91 07 03  	nextreg $7,3 ;set Mhz mode (3=28mhz)
+ 24   8007 CD 50 82     	call game_init
+ 25   800A C3 0D 80     	jp main_loop
+ 26   800D
+ 27   800D              main_loop:
+ 28   800D
+ 29   800D CD 70 82     	call game_update
+ 30   8010 CD 8A 82     	call game_draw
+ 31   8013
+ 32   8013 C3 0D 80     	jp main_loop
+ 33   8016
+ 34   8016
+ 35   8016
+ 36   8016
+ 37   8016              STACK_SIZE equ 20
+ 38   8016 00 00 00...  stack_bottom ds STACK_SIZE, 0
+ 39   802A 00           stack_top db 0
+ 40   802B
+ 41   802B              	include 'retrotools\constants.asm'
+# file opened: src/retrotools/constants.asm
+  1+  802B              FALSE equ 0
+  2+  802B              TRUE equ 1
+  3+  802B
+  4+  802B              DEAD equ 0
+  5+  802B              ALIVE equ 1
+  6+  802B
+  7+  802B              NOT_VISIBLE equ 0
+  8+  802B              VISIBLE equ 1
+  9+  802B
+ 10+  802B              NOT_ENABLED equ 0
+ 11+  802B              ENABLED equ 1
+ 12+  802B
+ 13+  802B
+ 14+  802B              ;DIRECTIONS:
+ 15+  802B              LEFT equ 0
+ 16+  802B              RIGHT equ 1
+ 17+  802B              UP equ 2
+ 18+  802B              DOWN equ 3
+ 19+  802B
+ 20+  802B
+ 21+  802B              ;48k Screen
+ 22+  802B              SCREEN_WIDTH_CELLS equ 32
+ 23+  802B              SCREEN_HEIGHT_CELLS equ 24
+ 24+  802B
+ 25+  802B
+ 26+  802B
+ 27+  802B              ;Next Screen
+ 28+  802B              GUTTER equ 32
+ 29+  802B
+ 30+  802B
+ 31+  802B
+ 32+  802B
+ 33+  802B              END_OF_ARRAY equ 255
+ 34+  802B
+ 35+  802B
+ 36+  802B
+ 37+  802B
+ 38+  802B
+ 39+  802B
+ 40+  802B
+ 41+  802B
+ 42+  802B
+ 43+  802B
+# file closed: src/retrotools/constants.asm
+ 42   802B              	include 'retrotools\tools.asm'
+# file opened: src/retrotools/tools.asm
+  1+  802B              ;MACROS
+  2+  802B              	MACRO BREAKPOINT
+  3+  802B ~            		DW $01DD
+  4+  802B              	ENDM
+  5+  802B
+  6+  802B              	MACRO CLIPTILES x1,y1,x2,y2
+  7+  802B ~            		ld a,x1
+  8+  802B ~            		nextreg $1b,a
+  9+  802B ~            		ld a,y1
+ 10+  802B ~            		nextreg $1b,a
+ 11+  802B ~            		ld a,x2
+ 12+  802B ~            		nextreg $1b,a
+ 13+  802B ~            		ld a,y2
+ 14+  802B ~            		nextreg $1b,a
+ 15+  802B ~
+ 16+  802B              	ENDM
+ 17+  802B
+ 18+  802B              	MACRO CLIP_LAYER2 x1,x2,y1,y2
+ 19+  802B ~            		ld a,x1
+ 20+  802B ~            		nextreg $18,a
+ 21+  802B ~            		ld a,x2
+ 22+  802B ~            		nextreg $18,a
+ 23+  802B ~            		ld a,y1
+ 24+  802B ~            		nextreg $18,a
+ 25+  802B ~            		ld a,y2
+ 26+  802B ~            		nextreg $18,a
+ 27+  802B ~
+ 28+  802B              	ENDM
+ 29+  802B
+ 30+  802B
+ 31+  802B              	MACRO SUB_HL_A
+ 32+  802B ~            	neg
+ 32+  802B ~              add hl,a
+ 33+  802B              	ENDM
+ 34+  802B
+ 35+  802B
+ 36+  802B              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 37+  802B              ;; Wait for n clock cycles
+ 38+  802B              ;; Inputs: BC=n
+ 39+  802B              ;; Outputs: none
+ 40+  802B              ;; Destroys: A,BC
+ 41+  802B              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 42+  802B              wait:
+ 43+  802B 0B           	dec bc
+ 44+  802C 78           	ld a,b
+ 45+  802D FE 00        	cp 0
+ 46+  802F C2 2B 80     	jp nz, wait
+ 47+  8032 C9           	ret
+ 48+  8033
+ 49+  8033
+ 50+  8033
+ 51+  8033              ;;;em00k wrote this;;;;
+ 52+  8033              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 53+  8033              ;; Wait for vertical blank
+ 54+  8033              ;; Inputs: B=frames delay count
+ 55+  8033              ;; Outputs:
+ 56+  8033              ;; Destroys:
+ 57+  8033              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 58+  8033              WaitRasterLine:
+ 59+  8033 CD 39 80     	call RastererWait
+ 60+  8036 10 FB        	djnz WaitRasterLine
+ 61+  8038 C9           	ret
+ 62+  8039              RastererWait:
+ 63+  8039 C5           	push bc
+ 64+  803A 1E 10        	ld e,16
+ 64+  803C 3E 1F          ld a,$1f
+ 64+  803E 01 3B 24       ld bc,$243b
+ 64+  8041 ED 79          out (c),a
+ 64+  8043 04             inc b
+ 65+  8044              WaitForLinea:
+ 66+  8044 ED 78        	in a,(c)
+ 66+  8046 BB             cp e
+ 66+  8047 20 FB          jr nz,WaitForLinea
+ 67+  8049 C1           	pop bc
+ 68+  804A C9           	ret
+ 69+  804B
+ 70+  804B
+ 71+  804B
+ 72+  804B
+ 73+  804B
+ 74+  804B
+ 75+  804B
+ 76+  804B
+ 77+  804B
+ 78+  804B
+ 79+  804B
+ 80+  804B              LAYER2_ACCESS_PORT	EQU 	$123B
+ 81+  804B
+ 82+  804B              		;----------------
+ 83+  804B              		; Original code by Michael Ware adjustd to work with ZXB
+ 84+  804B              		; Plot tile to layer 2 (needs to accept > 256 tiles)
+ 85+  804B              		; in - hl = y/x tile coordinate (0-17, 0-31)
+ 86+  804B              		; in - a = number of tile to display
+ 87+  804B              		;----------------
+ 88+  804B              PlotTile8:
+ 89+  804B ED 91 56 11  		nextreg $56,17
+ 90+  804F
+ 91+  804F 16 40        		ld d,64
+ 92+  8051 5F           		ld e,a					; 11
+ 93+  8052 ED 30        		mul de
+ 94+  8054
+ 95+  8054 3E C0        		ld a,%11000000 			; this points to $c000
+ 96+  8056 B2           		or d		 			; 8
+ 97+  8057 EB           		ex de,hl				; 4			; cannot avoid an ex (de now = yx)
+ 98+  8058 67           		ld h,a					; 4
+ 99+  8059 7B           		ld a,e
+100+  805A 07           		rlca
+101+  805B 07           		rlca
+102+  805C 07           		rlca
+103+  805D 5F           		ld e,a					; 4+4+4+4+4 = 20	; mul x,8
+104+  805E 7A           		ld a,d
+105+  805F 07           		rlca
+106+  8060 07           		rlca
+107+  8061 07           		rlca
+108+  8062 57           		ld d,a					; 4+4+4+4+4 = 20	; mul y,8
+109+  8063 E6 C0        		and 192
+110+  8065 F6 03        		or 3					; or 3 to keep layer on				; 8
+111+  8067 01 3B 12     		ld bc,LAYER2_ACCESS_PORT
+112+  806A ED 79        		out (c),a      ; 21			; select bank
+113+  806C
+114+  806C 7A           		ld a,d
+115+  806D E6 3F        		and 63
+116+  806F 57           		ld d,a					; clear top 2 bits of y (dest) (4+4+4 = 12)
+117+  8070              		; T96 here
+118+  8070 3E 08        		ld a,8					; 7
+119+  8072              .plotTilesLoop2:
+120+  8072 D5           		push de					; 11
+121+  8073 ED A0        		ldi
+122+  8075 ED A0        		ldi
+123+  8077 ED A0        		ldi
+124+  8079 ED A0        		ldi
+125+  807B ED A0        		ldi
+126+  807D ED A0        		ldi
+127+  807F ED A0        		ldi
+128+  8081 ED A0        		ldi					; 8 * 16 = 128
+129+  8083
+130+  8083 D1           		pop de					; 11
+131+  8084 14           		inc d					; 4 add 256 for next line down
+132+  8085 3D           		dec a					; 4
+133+  8086 20 EA        		jr nz,.plotTilesLoop2			; 12/7
+134+  8088
+135+  8088 ED 91 56 0E  		nextreg $56,14 ;$0e
+136+  808C C9           		ret
+137+  808D
+138+  808D
+139+  808D
+140+  808D
+141+  808D
+142+  808D
+143+  808D              ; ;HL=mem address start yx
+144+  808D              ; ;DE=message address
+145+  808D              ; display_string:
+146+  808D              ;     ld a,(de)
+147+  808D              ;     cp 0
+148+  808D              ;     ret z
+149+  808D              ;     cp ' '
+150+  808D              ;     jp nz,disp_char_next
+151+  808D              ; 	inc a
+152+  808D              ; disp_char_next:
+153+  808D              ;     sub FONT_ASCII_OFFSET
+154+  808D              ;     push de
+155+  808D              ;     push hl
+156+  808D              ;     call PlotTile8
+157+  808D              ;     pop hl
+158+  808D              ;     pop de
+159+  808D
+160+  808D              ;     inc de
+161+  808D              ;     inc l
+162+  808D              ;     jp display_string
+163+  808D
+164+  808D
+165+  808D              ; display_numbers:
+166+  808D              ;     ld c,-100
+167+  808D              ;     call dispnums_add_offset
+168+  808D              ;     ld c,-10
+169+  808D              ;     call dispnums_add_offset
+170+  808D              ;     ld c,-1
+171+  808D              ; dispnums_add_offset:
+172+  808D              ;     ld b,FONT_START
+173+  808D              ; dispnums_inc:
+174+  808D              ;     inc b
+175+  808D              ;     add a,c
+176+  808D              ;     jr c, dispnums_inc
+177+  808D              ;     sub c ;actually adding (its holding minus number)
+178+  808D              ;     push af
+179+  808D              ;     ld a,b
+180+  808D              ;     push hl
+181+  808D              ;     call PlotTile8
+182+  808D              ;     pop hl
+183+  808D              ;     inc l
+184+  808D              ;     pop af
+185+  808D              ;     ret
+186+  808D
+187+  808D
+188+  808D
+189+  808D
+# file closed: src/retrotools/tools.asm
+ 43   808D              	include 'retrotools\keycacher.asm'
+# file opened: src/retrotools/keycacher.asm
+  1+  808D              ;Usage:
+  2+  808D              ;first call check_keys
+  3+  808D              ;compare states of cached values (eg. keypressed_W) before doing movement/actions etc.
+  4+  808D              ;after all actions, call reset_keys
+  5+  808D
+  6+  808D
+  7+  808D              ; 32766 B, N, M, Symbol Shift, Space
+  8+  808D              ; 49150 H, J, K, L, Enter
+  9+  808D              ; 57342 Y, U, I, O, P
+ 10+  808D              ; 61438 6, 7, 8, 9, 0
+ 11+  808D              ; 63486 5, 4, 3, 2, 1
+ 12+  808D              ; 64510 T, R, E, W, Q
+ 13+  808D              ; 65022 G, F, D, S, A
+ 14+  808D              ; 65278 V, C, X, Z, Caps Shift
+ 15+  808D
+ 16+  808D
+ 17+  808D 00           keypressed_W db FALSE
+ 18+  808E 00           keypressed_W_Held db FALSE
+ 19+  808F 00           keypressed_A db FALSE
+ 20+  8090 00           keypressed_A_Held db FALSE
+ 21+  8091 00           keypressed_S db FALSE
+ 22+  8092 00           keypressed_S_Held db FALSE
+ 23+  8093 00           keypressed_D db FALSE
+ 24+  8094
+ 25+  8094 00           keypressed_F db FALSE
+ 26+  8095 00           keypressed_F_Held db FALSE
+ 27+  8096 00           keypressed_I db FALSE
+ 28+  8097 00           keypressed_Q db FALSE
+ 29+  8098 00           keypressed_Q_Held db FALSE
+ 30+  8099 00           keypressed_O db FALSE
+ 31+  809A 00           keypressed_P db FALSE
+ 32+  809B 00           keypressed_Space db FALSE
+ 33+  809C 00           keypressed_Space_Held db FALSE
+ 34+  809D
+ 35+  809D              check_keys:
+ 36+  809D 3A 8D 80         ld a,(keypressed_W)
+ 37+  80A0 FE 01            cp TRUE
+ 38+  80A2 CC 55 81         call z,set_W_Held
+ 39+  80A5 C4 5B 81         call nz, reset_W_Held
+ 40+  80A8
+ 41+  80A8 3A 91 80         ld a,(keypressed_S)
+ 42+  80AB FE 01            cp TRUE
+ 43+  80AD CC 77 81         call z,set_S_Held
+ 44+  80B0 C4 7D 81         call nz, reset_S_Held
+ 45+  80B3
+ 46+  80B3 3A 94 80         ld a,(keypressed_F)
+ 47+  80B6 FE 01            cp TRUE
+ 48+  80B8 CC 8E 81         call z, set_F_Held
+ 49+  80BB C4 94 81         call nz, reset_F_Held
+ 50+  80BE
+ 51+  80BE 3A 8F 80         ld a,(keypressed_A)
+ 52+  80C1 FE 01            cp TRUE
+ 53+  80C3 CC 66 81         call z,set_A_Held
+ 54+  80C6 C4 6C 81         call nz, reset_A_Held
+ 55+  80C9
+ 56+  80C9 3A 97 80         ld a,(keypressed_Q)
+ 57+  80CC FE 01            cp TRUE
+ 58+  80CE CC A5 81         call z,set_Q_Held
+ 59+  80D1 C4 AB 81         call nz, reset_Q_Held
+ 60+  80D4
+ 61+  80D4 3A 9B 80         ld a,(keypressed_Space)
+ 62+  80D7 FE 01            cp TRUE
+ 63+  80D9 CC C2 81         call z,set_Space_Held
+ 64+  80DC C4 C8 81         call nz, reset_Space_Held
+ 65+  80DF
+ 66+  80DF
+ 67+  80DF
+ 68+  80DF AF               xor a
+ 69+  80E0 32 8D 80         ld (keypressed_W),a
+ 70+  80E3 32 8F 80         ld (keypressed_A),a
+ 71+  80E6 32 91 80         ld (keypressed_S),a
+ 72+  80E9 32 93 80         ld (keypressed_D),a
+ 73+  80EC 32 94 80         ld (keypressed_F),a
+ 74+  80EF 32 96 80         ld (keypressed_I),a
+ 75+  80F2 32 97 80         ld (keypressed_Q),a
+ 76+  80F5 32 99 80         ld (keypressed_O),a
+ 77+  80F8 32 9A 80         ld (keypressed_P),a
+ 78+  80FB 32 9B 80         ld (keypressed_Space),a
+ 79+  80FE
+ 80+  80FE
+ 81+  80FE 01 FE FD         ld bc,0xFDFE ;ASDFG
+ 82+  8101 ED 78            in a,(c)
+ 83+  8103 1F               rra
+ 84+  8104 F5               push af
+ 85+  8105 D4 60 81         call nc, set_A
+ 86+  8108 F1               pop af
+ 87+  8109 1F               rra
+ 88+  810A F5               push af
+ 89+  810B D4 71 81         call nc, set_S
+ 90+  810E F1               pop af
+ 91+  810F 1F               rra
+ 92+  8110 F5               push af
+ 93+  8111 D4 82 81         call nc, set_D
+ 94+  8114 F1               pop af
+ 95+  8115 1F               rra
+ 96+  8116 F5               push af
+ 97+  8117 D4 88 81         call nc, set_F
+ 98+  811A F1               pop af
+ 99+  811B
+100+  811B 01 FE FB         ld bc,0xFBFE ;QWERT
+101+  811E ED 78            in a,(c)
+102+  8120 1F               rra ;Q
+103+  8121 F5               push af
+104+  8122 D4 9F 81         call nc, set_Q
+105+  8125 F1               pop af
+106+  8126 1F               rra ;W
+107+  8127 F5               push af
+108+  8128 D4 4F 81         call nc, set_W
+109+  812B F1               pop af
+110+  812C
+111+  812C 01 FE DF         ld bc,0xDFFE ;POIUY
+112+  812F ED 78            in a,(c)
+113+  8131 1F               rra ;P
+114+  8132 F5               push af
+115+  8133 D4 B6 81         call nc, set_P
+116+  8136 F1               pop af
+117+  8137 1F               rra ;O
+118+  8138 F5               push af
+119+  8139 D4 B0 81         call nc, set_O
+120+  813C F1               pop af
+121+  813D 1F               rra ;I
+122+  813E F5               push af
+123+  813F D4 99 81         call nc, set_I
+124+  8142 F1               pop af
+125+  8143
+126+  8143 01 FE 7F         ld bc,32766
+127+  8146 ED 78            in a,(c)
+128+  8148 1F               rra
+129+  8149 F5               push af
+130+  814A D4 BC 81         call nc, set_Space
+131+  814D F1               pop af
+132+  814E
+133+  814E
+134+  814E C9               ret
+135+  814F
+136+  814F              set_W:
+137+  814F 3E 01            ld a,TRUE
+138+  8151 32 8D 80         ld (keypressed_W),a
+139+  8154 C9               ret
+140+  8155
+141+  8155              set_W_Held:
+142+  8155 3E 01            ld a,TRUE
+143+  8157 32 8E 80         ld (keypressed_W_Held),a
+144+  815A C9               ret
+145+  815B              reset_W_Held:
+146+  815B AF               xor a
+147+  815C 32 8E 80         ld (keypressed_W_Held),a
+148+  815F C9               ret
+149+  8160
+150+  8160              set_A:
+151+  8160 3E 01            ld a,TRUE
+152+  8162 32 8F 80         ld (keypressed_A),a
+153+  8165 C9               ret
+154+  8166
+155+  8166              set_A_Held:
+156+  8166 3E 01            ld a,TRUE
+157+  8168 32 90 80         ld (keypressed_A_Held),a
+158+  816B C9               ret
+159+  816C
+160+  816C              reset_A_Held:
+161+  816C AF               xor a
+162+  816D 32 90 80         ld (keypressed_A_Held),a
+163+  8170 C9               ret
+164+  8171
+165+  8171              set_S:
+166+  8171 3E 01            ld a,TRUE
+167+  8173 32 91 80         ld (keypressed_S),a
+168+  8176 C9               ret
+169+  8177              set_S_Held:
+170+  8177 3E 01            ld a,TRUE
+171+  8179 32 92 80         ld (keypressed_S_Held),a
+172+  817C C9               ret
+173+  817D              reset_S_Held:
+174+  817D AF               xor a
+175+  817E 32 92 80         ld (keypressed_S_Held),a
+176+  8181 C9               ret
+177+  8182
+178+  8182              set_D:
+179+  8182 3E 01            ld a,TRUE
+180+  8184 32 93 80         ld (keypressed_D),a
+181+  8187 C9               ret
+182+  8188
+183+  8188              set_F:
+184+  8188 3E 01            ld a,TRUE
+185+  818A 32 94 80         ld (keypressed_F),a
+186+  818D C9               ret
+187+  818E
+188+  818E
+189+  818E              set_F_Held:
+190+  818E 3E 01            ld a,TRUE
+191+  8190 32 95 80         ld (keypressed_F_Held),a
+192+  8193 C9               ret
+193+  8194
+194+  8194              reset_F_Held:
+195+  8194 AF               xor a
+196+  8195 32 95 80         ld (keypressed_F_Held),a
+197+  8198 C9               ret
+198+  8199
+199+  8199
+200+  8199
+201+  8199              set_I:
+202+  8199 3E 01            ld a,TRUE
+203+  819B 32 96 80         ld (keypressed_I),a
+204+  819E C9               ret
+205+  819F
+206+  819F
+207+  819F              set_Q:
+208+  819F 3E 01            ld a,TRUE
+209+  81A1 32 97 80         ld (keypressed_Q),a
+210+  81A4 C9               ret
+211+  81A5
+212+  81A5              set_Q_Held:
+213+  81A5 3E 01            ld a,TRUE
+214+  81A7 32 98 80         ld (keypressed_Q_Held),a
+215+  81AA C9               ret
+216+  81AB
+217+  81AB              reset_Q_Held:
+218+  81AB AF               xor a
+219+  81AC 32 98 80         ld (keypressed_Q_Held),a
+220+  81AF C9               ret
+221+  81B0
+222+  81B0              set_O:
+223+  81B0 3E 01            ld a,TRUE
+224+  81B2 32 99 80         ld (keypressed_O),a
+225+  81B5 C9               ret
+226+  81B6
+227+  81B6              set_P:
+228+  81B6 3E 01            ld a,TRUE
+229+  81B8 32 9A 80         ld (keypressed_P),a
+230+  81BB C9               ret
+231+  81BC
+232+  81BC              set_Space:
+233+  81BC 3E 01            ld a,TRUE
+234+  81BE 32 9B 80         ld (keypressed_Space),a
+235+  81C1 C9               ret
+236+  81C2              set_Space_Held:
+237+  81C2 3E 01            ld a,TRUE
+238+  81C4 32 9C 80         ld (keypressed_Space_Held),a
+239+  81C7 C9               ret
+240+  81C8
+241+  81C8              reset_Space_Held:
+242+  81C8 AF               xor a
+243+  81C9 32 9C 80         ld (keypressed_Space_Held),a
+244+  81CC C9               ret
+245+  81CD
+# file closed: src/retrotools/keycacher.asm
+ 44   81CD              	include 'retrotools\spritetools.asm'
+# file opened: src/retrotools/spritetools.asm
+  1+  81CD              ; Sprite Attribute 0
+  2+  81CD              ;     X X X X X X X X
+  3+  81CD
+  4+  81CD              ; Sprite Attribute 1
+  5+  81CD              ;     Y Y Y Y Y Y Y Y
+  6+  81CD
+  7+  81CD              ; Sprite Attribute 2
+  8+  81CD              ;     P P P P XM YM R X8/PR
+  9+  81CD
+ 10+  81CD              ; Sprite Attribute 3
+ 11+  81CD              ;     V E N5 N4 N3 N2 N1 N0 (NNNNN=Pattern ID)
+ 12+  81CD
+ 13+  81CD              ; Sprite Attribute 4
+ 14+  81CD              ; A. Extended Anchor Sprite
+ 15+  81CD              ;     H N6 T X X Y Y Y8
+ 16+  81CD              ; B. Relative Sprite, Composite Type
+ 17+  81CD              ;     0 1 N6 X X Y Y PO
+ 18+  81CD              ; C. Relative Sprite, Unified Type
+ 19+  81CD              ;     0 1 N6 0 0 0 0 PO
+ 20+  81CD
+ 21+  81CD
+ 22+  81CD              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 23+  81CD              ;; Upload spritesheet to 16K FPGA Internal Memory
+ 24+  81CD              ;; Inputs: B=Sprite Count HL=Sprite data Ptr
+ 25+  81CD              ;; Outputs: none
+ 26+  81CD              ;; Destroys: A,BC,HL
+ 27+  81CD              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 28+  81CD              sprites_init:
+ 29+  81CD C5           	push bc
+ 30+  81CE 3E 00        	ld a,0
+ 31+  81D0 01 3B 30     	ld bc,$303b
+ 32+  81D3 ED 79        	out (c),a
+ 33+  81D5 C1           	pop bc
+ 34+  81D6              is_loop:
+ 35+  81D6 C5           	push bc
+ 36+  81D7 01 5B 00     	ld bc,$005b
+ 37+  81DA ED B3        	otir
+ 38+  81DC C1           	pop bc
+ 39+  81DD 10 F7        	djnz is_loop
+ 40+  81DF C9           	ret
+# file closed: src/retrotools/spritetools.asm
+ 45   81E0              	include 'retrotools\disktools.asm'
+# file opened: src/retrotools/disktools.asm
+  1+  81E0              	macro LOAD_DATA name,dest,size, offset
+  2+  81E0 ~            		ld ix,name
+  3+  81E0 ~            		ld hl,dest
+  4+  81E0 ~            		ld bc,size
+  5+  81E0 ~            		ld de,offset
+  6+  81E0 ~            		call load_data
+  7+  81E0              	endm
+  8+  81E0
+  9+  81E0              	macro SAVE_DATA name,source,size
+ 10+  81E0 ~            		ld ix,name
+ 11+  81E0 ~            		ld hl,source
+ 12+  81E0 ~            		ld bc,size
+ 13+  81E0 ~            		call save_data
+ 14+  81E0              	endm
+ 15+  81E0
+ 16+  81E0              	macro ESXDOS command
+ 17+  81E0 ~            		rst 8
+ 18+  81E0 ~            		db command
+ 19+  81E0              	endm
+ 20+  81E0
+ 21+  81E0
+ 22+  81E0              ;TODO:
+ 23+  81E0              ;success signal of some kind.
+ 24+  81E0              ;better error handling.
+ 25+  81E0
+ 26+  81E0
+ 27+  81E0              M_GETSETDRV 	equ $89
+ 28+  81E0              F_OPEN 			equ $9a
+ 29+  81E0              F_CLOSE 		equ $9b
+ 30+  81E0              F_READ 			equ $9d
+ 31+  81E0              F_WRITE 		equ $9e
+ 32+  81E0              F_SEEK 			equ $9f
+ 33+  81E0              F_GET_DIR 		equ $a8
+ 34+  81E0              F_SET_DIR 		equ $a9
+ 35+  81E0
+ 36+  81E0              FA_READ 		equ $01
+ 37+  81E0              FA_WRITE 		equ $02
+ 38+  81E0              FA_APPEND 		equ $06
+ 39+  81E0              FA_OVERWRITE 	equ $0C
+ 40+  81E0
+ 41+  81E0              ; ***************************************************************************
+ 42+  81E0              ; * F_OPEN ($9a) *
+ 43+  81E0              ; ***************************************************************************
+ 44+  81E0              ; Open a file.
+ 45+  81E0              ; Entry:
+ 46+  81E0              ; A=drive specifier (overridden if filespec includes a drive)
+ 47+  81E0              ; IX [HL from dot command]=filespec, null-terminated
+ 48+  81E0              ; B=access modes, a combination of:
+ 49+  81E0              ; any/all of:
+ 50+  81E0              ; esx_mode_read $01 request read access
+ 51+  81E0              ; esx_mode_write $02 request write access
+ 52+  81E0              ; esx_mode_use_header $40 read/write +3DOS header
+ 53+  81E0              ; plus one of:
+ 54+  81E0              ; esx_mode_open_exist $00 only open existing file
+ 55+  81E0              ; esx_mode_open_creat $08 open existing or create file
+ 56+  81E0              ; esx_mode_creat_noexist $04 create new file, error if exists
+ 57+  81E0              ; esx_mode_creat_trunc $0c create new file, delete existing
+ 58+  81E0              ;
+ 59+  81E0              ; DE=8-byte buffer with/for +3DOS header data (if specified in mode)
+ 60+  81E0              ; (NB: filetype will be set to $ff if headerless file was opened)
+ 61+  81E0              ; Exit (success):
+ 62+  81E0              ; Fc=0 (flag carry zero)
+ 63+  81E0              ; A=file handle
+ 64+  81E0              ; Exit (failure):
+ 65+  81E0              ; Fc=1
+ 66+  81E0              ; A=error code
+ 67+  81E0
+ 68+  81E0
+ 69+  81E0              ; ***************************************************************************
+ 70+  81E0              ; * F_SEEK ($9f) *
+ 71+  81E0              ; ***************************************************************************
+ 72+  81E0              ; Seek to position in file.
+ 73+  81E0              ; Entry:
+ 74+  81E0              ; A=file handle
+ 75+  81E0              ; BCDE=bytes to seek
+ 76+  81E0              ; IXL [L from dot command]=seek mode:
+ 77+  81E0              ; esx_seek_set $00 set the fileposition to BCDE
+ 78+  81E0              ; esx_seek_fwd $01 add BCDE to the fileposition
+ 79+  81E0              ; esx_seek_bwd $02 subtract BCDE from the fileposition
+ 80+  81E0              ; Exit (success):
+ 81+  81E0              ; Fc=0
+ 82+  81E0              ; BCDE=current position
+ 83+  81E0              ; Exit (failure):
+ 84+  81E0              ; Fc=1
+ 85+  81E0              ; A=error code
+ 86+  81E0              ;
+ 87+  81E0              ; NOTES:
+ 88+  81E0              ; Attempts to seek past beginning/end of file leave BCDE=position=0/filesize
+ 89+  81E0              ; respectively, with no error.
+ 90+  81E0
+ 91+  81E0
+ 92+  81E0 00           handle db 0
+ 93+  81E1
+ 94+  81E1
+ 95+  81E1              load_data:
+ 96+  81E1 E5               push hl
+ 97+  81E2 C5           	push bc
+ 98+  81E3 D5           	push de
+ 99+  81E4 3E 2A        	ld a,'*'
+100+  81E6 06 01        	ld b,FA_READ
+101+  81E8
+102+  81E8              	ESXDOS F_OPEN
+102+  81E8 CF          >		rst 8
+102+  81E9 9A          >		db F_OPEN
+103+  81EA DA 07 82     	jp c,failedtoload
+104+  81ED
+105+  81ED 32 E0 81     	ld (handle),a
+106+  81F0
+107+  81F0 D1           	pop de
+108+  81F1
+109+  81F1 DD 2E 00     	ld ixl,0
+110+  81F4 01 00 00     	ld bc,0
+111+  81F7
+112+  81F7              	ESXDOS F_SEEK
+112+  81F7 CF          >		rst 8
+112+  81F8 9F          >		db F_SEEK
+113+  81F9
+114+  81F9 3A E0 81     	ld a,(handle)
+115+  81FC
+116+  81FC C1           	pop bc
+117+  81FD DD E1        	pop ix
+118+  81FF
+119+  81FF              	ESXDOS F_READ
+119+  81FF CF          >		rst 8
+119+  8200 9D          >		db F_READ
+120+  8201
+121+  8201 3A E0 81     	ld a,(handle)
+122+  8204              	ESXDOS F_CLOSE
+122+  8204 CF          >		rst 8
+122+  8205 9B          >		db F_CLOSE
+123+  8206 C9               ret
+124+  8207              ;
+125+  8207
+126+  8207              failedtoload:
+127+  8207 ED 91 69 00  	nextreg $69,0
+128+  820B 21 21 82     	ld hl,failedtoloadtext
+128+  820E CD 19 82       call printrstfailed
+129+  8211 DD E5        	push ix
+129+  8213 E1             pop hl
+129+  8214 CD 19 82       call printrstfailed
+130+  8217 F3           	di
+130+  8218 76             halt
+131+  8219              ;
+132+  8219
+133+  8219              printrstfailed;
+134+  8219 7E           	ld a,(hl)
+134+  821A B7             or a
+134+  821B C8             ret z
+134+  821C D7             rst 16
+134+  821D 23             inc hl
+134+  821E C3 19 82       jp printrstfailed
+135+  8221              ;
+136+  8221
+137+  8221              failedtoloadtext:
+138+  8221 46 61 69 6C  	db "Failed to load : ",0
+138+  8225 65 64 20 74
+138+  8229 6F 20 6C 6F
+138+  822D 61 64 20 3A
+138+  8231 20 00
+139+  8233              ;
+140+  8233
+141+  8233
+142+  8233
+143+  8233              ; ***************************************************************************
+144+  8233              ; * F_WRITE ($9e) *
+145+  8233              ; ***************************************************************************
+146+  8233              ; Write bytes to file.
+147+  8233              ; Entry:
+148+  8233              ; A=file handle
+149+  8233              ; IX [HL from dot command]=address
+150+  8233              ; BC=bytes to write
+151+  8233              ; Exit (success):
+152+  8233              ; Fc=0
+153+  8233              ; BC=bytes actually written
+154+  8233              ; Exit (failure):
+155+  8233              ; Fc=1
+156+  8233              ; BC=bytes actually written
+157+  8233
+158+  8233
+159+  8233              save_data:
+160+  8233 E5               push hl
+161+  8234 C5           	push bc
+162+  8235 3E 2A        	ld a,'*'
+163+  8237 06 0E        	ld b,FA_OVERWRITE|FA_WRITE
+164+  8239
+165+  8239              	ESXDOS F_OPEN
+165+  8239 CF          >		rst 8
+165+  823A 9A          >		db F_OPEN
+166+  823B DA 4C 82     	jp c,failedtosave
+167+  823E
+168+  823E 32 E0 81     	ld (handle),a
+169+  8241
+170+  8241 C1           	pop bc
+171+  8242 DD E1        	pop ix
+172+  8244
+173+  8244              	ESXDOS F_WRITE
+173+  8244 CF          >		rst 8
+173+  8245 9E          >		db F_WRITE
+174+  8246
+175+  8246 3A E0 81     	ld a,(handle)
+176+  8249              	ESXDOS F_CLOSE
+176+  8249 CF          >		rst 8
+176+  824A 9B          >		db F_CLOSE
+177+  824B C9               ret
+178+  824C              ;
+179+  824C
+180+  824C              failedtosave:
+181+  824C              	; BREAKPOINT
+182+  824C C9           	ret
+# file closed: src/retrotools/disktools.asm
+ 46   824D
+ 47   824D              	include 'game.asm'
+# file opened: src/game.asm
+  1+  824D 00           framecounter8 db 0
+  2+  824E 00 00        framecounter16 dw 0
+  3+  8250
+  4+  8250              game_init:
+  5+  8250                  ; call layer2_init
+  6+  8250
+  7+  8250 ED 91 15 0B      nextreg $15, %00001011 ;sprites/layers system register
+  8+  8254 ED 91 43 30      nextreg $43, %00110000 ;enhanced ula control register
+  9+  8258 ED 91 68 80      nextreg $68, %10000000 ;ula control register
+ 10+  825C
+ 11+  825C AF               xor a ;black
+ 12+  825D ED 92 4C         nextreg $4c,a ;tilemap transparency colour
+ 13+  8260 ED 92 14         nextreg $14,a; global transparency colour
+ 14+  8263
+ 15+  8263 ED 91 56 0E      nextreg $56,14
+ 16+  8267 06 01            ld b,SPRITE_COUNT
+ 17+  8269 21 00 C0         ld hl,$c000
+ 18+  826C CD CD 81         call sprites_init
+ 19+  826F
+ 20+  826F
+ 21+  826F
+ 22+  826F
+ 23+  826F
+ 24+  826F C9               ret
+ 25+  8270
+ 26+  8270
+ 27+  8270              game_update:
+ 28+  8270 06 0B            ld b,11
+ 29+  8272 CD 33 80         call WaitRasterLine
+ 30+  8275
+ 31+  8275 3A 4D 82         ld a,(framecounter8)
+ 32+  8278 3C               inc a
+ 33+  8279 32 4D 82         ld (framecounter8),a
+ 34+  827C
+ 35+  827C 2A 4E 82         ld hl,(framecounter16)
+ 36+  827F 23               inc hl
+ 37+  8280 22 4E 82         ld (framecounter16),hl
+ 38+  8283
+ 39+  8283
+ 40+  8283 CD 9D 80         call check_keys
+ 41+  8286 CD DA 82         call face_update
+ 42+  8289
+ 43+  8289 C9               ret
+ 44+  828A
+ 45+  828A              game_draw:
+ 46+  828A CD B6 82         call face_draw
+ 47+  828D C9               ret
+ 48+  828E
+ 49+  828E
+# file closed: src/game.asm
+ 48   828E              	include 'sprites\face.asm'
+# file opened: src/sprites/face.asm
+  1+  828E 98 00        face_x dw (320/2)-(16/2)
+  2+  8290 78           face_y db (256/2)-(16/2)
+  3+  8291 00           face_attr2 db 0
+  4+  8292 80           face_attr3 db %10000000
+  5+  8293
+  6+  8293 00           face_slot db 0
+  7+  8294
+  8+  8294 73 61 76 65  filename db 'savegame.sav',0
+  8+  8298 67 61 6D 65
+  8+  829C 2E 73 61 76
+  8+  82A0 00
+  9+  82A1
+ 10+  82A1
+ 11+  82A1
+ 12+  82A1              ; Xl, Xh, Y
+ 13+  82A1              gamedata:
+ 14+  82A1 00 00 00     	db 0,0,0
+ 15+  82A4
+ 16+  82A4              GAMEDATA_LENGTH equ $-gamedata
+ 17+  82A4
+ 18+  82A4
+ 19+  82A4              face_loadstate_init:
+ 20+  82A4 21 A1 82         ld hl,gamedata
+ 21+  82A7 7E               ld a,(hl)
+ 22+  82A8 4F               ld c,a
+ 23+  82A9 23               inc hl
+ 24+  82AA 7E               ld a,(hl)
+ 25+  82AB 47               ld b,a
+ 26+  82AC ED 43 8E 82      ld (face_x),bc
+ 27+  82B0 23               inc hl
+ 28+  82B1 7E               ld a,(hl)
+ 29+  82B2 32 90 82         ld (face_y),a
+ 30+  82B5
+ 31+  82B5 C9               ret
+ 32+  82B6
+ 33+  82B6
+ 34+  82B6
+ 35+  82B6              face_draw:
+ 36+  82B6 3A 93 82         ld a,(face_slot)
+ 37+  82B9 ED 92 34         nextreg $34,a
+ 38+  82BC
+ 39+  82BC 2A 8E 82         ld hl,(face_x)
+ 40+  82BF 7D               ld a,l
+ 41+  82C0 ED 92 35         nextreg $35,a
+ 42+  82C3
+ 43+  82C3 3A 90 82         ld a,(face_y)
+ 44+  82C6 ED 92 36         nextreg $36,a
+ 45+  82C9
+ 46+  82C9 3A 91 82         ld a,(face_attr2)
+ 47+  82CC 2A 8E 82         ld hl,(face_x)
+ 48+  82CF B4               or h
+ 49+  82D0 ED 92 37         nextreg $37,a
+ 50+  82D3
+ 51+  82D3 3A 92 82         ld a,(face_attr3)
+ 52+  82D6 ED 92 38         nextreg $38,a
+ 53+  82D9
+ 54+  82D9
+ 55+  82D9 C9               ret
+ 56+  82DA
+ 57+  82DA
+ 58+  82DA
+ 59+  82DA
+ 60+  82DA
+ 61+  82DA              face_update:
+ 62+  82DA 3A 97 80         ld a,(keypressed_Q)
+ 63+  82DD FE 01            cp TRUE
+ 64+  82DF CC 0B 83         call z,face_move_up
+ 65+  82E2
+ 66+  82E2 3A 8F 80         ld a,(keypressed_A)
+ 67+  82E5 FE 01            cp TRUE
+ 68+  82E7 CC 16 83         call z,face_move_down
+ 69+  82EA
+ 70+  82EA 3A 99 80         ld a,(keypressed_O)
+ 71+  82ED FE 01            cp TRUE
+ 72+  82EF CC 21 83         call z,face_move_left
+ 73+  82F2
+ 74+  82F2 3A 9A 80         ld a,(keypressed_P)
+ 75+  82F5 FE 01            cp TRUE
+ 76+  82F7 CC 2C 83         call z,face_move_right
+ 77+  82FA
+ 78+  82FA 3A 91 80         ld a,(keypressed_S)
+ 79+  82FD FE 01            cp TRUE
+ 80+  82FF CC 3E 83         call z,face_saveposition
+ 81+  8302 3A 8D 80         ld a,(keypressed_W)
+ 82+  8305 FE 01            cp TRUE
+ 83+  8307 CC 5F 83         call z,face_loadposition
+ 84+  830A
+ 85+  830A
+ 86+  830A C9               ret
+ 87+  830B
+ 88+  830B
+ 89+  830B
+ 90+  830B
+ 91+  830B
+ 92+  830B              face_move_up:
+ 93+  830B 3A 90 82         ld a,(face_y)
+ 94+  830E FE 00            cp 0
+ 95+  8310 C8               ret z
+ 96+  8311 3D               dec a
+ 97+  8312 32 90 82         ld (face_y),a
+ 98+  8315 C9               ret
+ 99+  8316
+100+  8316              face_move_down:
+101+  8316 3A 90 82         ld a,(face_y)
+102+  8319 FE F0            cp 256-16
+103+  831B C8               ret z
+104+  831C 3C               inc a
+105+  831D 32 90 82         ld (face_y),a
+106+  8320
+107+  8320 C9               ret
+108+  8321
+109+  8321
+110+  8321
+111+  8321
+112+  8321              face_move_left:
+113+  8321 2A 8E 82         ld hl,(face_x)
+114+  8324 7C               ld a,h
+115+  8325 B5               or l
+116+  8326 C8               ret z
+117+  8327
+118+  8327 2B               dec hl
+119+  8328 22 8E 82         ld (face_x),hl
+120+  832B C9               ret
+121+  832C
+122+  832C              face_move_right:
+123+  832C 2A 8E 82         ld hl,(face_x)
+124+  832F 7C               ld a,h
+125+  8330 FE 00            cp 0
+126+  8332 CA 39 83         jp z,f_mov_r
+127+  8335 7D               ld a,l
+128+  8336 FE 30            cp low 320-16
+129+  8338 D0               ret nc
+130+  8339              f_mov_r:
+131+  8339 23               inc hl
+132+  833A 22 8E 82         ld (face_x),hl
+133+  833D C9               ret
+134+  833E
+135+  833E
+136+  833E
+137+  833E
+138+  833E
+139+  833E
+140+  833E              face_saveposition:
+141+  833E DD 21 A1 82      ld ix,gamedata
+142+  8342 2A 8E 82         ld hl,(face_x)
+143+  8345 DD 75 00         ld (ix),l
+144+  8348 DD 74 01         ld (ix+1),h
+145+  834B 3A 90 82         ld a,(face_y)
+146+  834E DD 77 02         ld (ix+2),a
+147+  8351
+148+  8351                  SAVE_DATA filename,gamedata,GAMEDATA_LENGTH
+148+  8351 DD 21 94 82 >		ld ix,filename
+148+  8355 21 A1 82    >		ld hl,gamedata
+148+  8358 01 03 00    >		ld bc,GAMEDATA_LENGTH
+148+  835B CD 33 82    >		call save_data
+149+  835E C9               ret
+150+  835F
+151+  835F              face_loadposition:
+152+  835F                  LOAD_DATA filename,gamedata,GAMEDATA_LENGTH,0
+152+  835F DD 21 94 82 >		ld ix,filename
+152+  8363 21 A1 82    >		ld hl,gamedata
+152+  8366 01 03 00    >		ld bc,GAMEDATA_LENGTH
+152+  8369 11 00 00    >		ld de,0
+152+  836C CD E1 81    >		call load_data
+153+  836F CD A4 82         call face_loadstate_init
+154+  8372 C9               ret
+# file closed: src/sprites/face.asm
+ 49   8373
+ 50   8373              	include 'loadbins.asm'
+# file opened: src/loadbins.asm
+  1+  8373
+  2+  8373
+  3+  8373              ;;;;;Tiles
+  4+  8373
+  5+  8373
+  6+  8373
+  7+  8373              ; TILE_DEFINITIONS_SIZE equ 2048
+  8+  8373
+  9+  8373              ; caveman_palette:
+ 10+  8373              ;     incbin 'assets/_filename_.nxp',0
+ 11+  8373
+ 12+  8373              ;     MMU 6,16
+ 13+  8373              ;     org $c000
+ 14+  8373
+ 15+  8373              ;     incbin 'assets/_filename_.til',0,TILE_DEFINITIONS_SIZE
+ 16+  8373
+ 17+  8373
+ 18+  8373              ; ; 	;courtesy of ped7g:
+ 19+  8373              ; ;     ; patch tile gfx with grid gfx
+ 20+  8373              ; ; tileN=1
+ 21+  8373              ; ;     DUP 128-tileN
+ 22+  8373              ; ;         ORG $C000 + tileN*32
+ 23+  8373              ; ;         DB $FF
+ 24+  8373              ; ;         DB {b $ } | $F0
+ 25+  8373              ; ;         ORG $C000 + tileN*32 + 1*4
+ 26+  8373              ; ;         DB {b $ } | $F0
+ 27+  8373              ; ;         ORG $C000 + tileN*32 + 2*4
+ 28+  8373              ; ;         DB {b $ } | $F0
+ 29+  8373              ; ;         ORG $C000 + tileN*32 + 6*4 + 3
+ 30+  8373              ; ;         DB {b $ } | $0F
+ 31+  8373              ; ;         ORG $C000 + tileN*32 + 7*4 + 3
+ 32+  8373              ; ;         DB $FF
+ 33+  8373              ; ; tileN=tileN+1
+ 34+  8373              ; ;     EDUP
+ 35+  8373
+ 36+  8373
+ 37+  8373
+ 38+  8373              ;;
+ 39+  8373              ;;Caveman Walk Animation:
+ 40+  8373              ; A>B>C>D>A>B>C>D
+ 41+  8373
+ 42+  8373              ;;;sprites
+ 43+  8373
+ 44+  8373              SPRITE_COUNT equ 1  ;<--- TOTAL SPRITE COUNT
+ 45+  8373
+ 46+  8373                  MMU 6,14
+ 47+  8373                  org $c000
+ 48+  C000
+ 49+  C000              face1:
+ 50+  C000 A0 A0 A0 A0  	db  $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0;
+ 50+  C004 A0 A0 A0 A0
+ 50+  C008 A0 A0 A0 A0
+ 50+  C00C A0 A0 A0 A0
+ 51+  C010 A0 A8 A8 A8  	db  $A0, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A0;
+ 51+  C014 A8 A8 A8 A8
+ 51+  C018 A8 A8 A8 A8
+ 51+  C01C A8 A8 A8 A0
+ 52+  C020 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 52+  C024 CC CC CC CC
+ 52+  C028 CC CC CC CC
+ 52+  C02C CC CC A8 A0
+ 53+  C030 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 53+  C034 61 61 CC CC
+ 53+  C038 CC CC 61 61
+ 53+  C03C CC CC A8 A0
+ 54+  C040 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 54+  C044 61 61 CC CC
+ 54+  C048 CC CC 61 61
+ 54+  C04C CC CC A8 A0
+ 55+  C050 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 55+  C054 61 61 CC CC
+ 55+  C058 CC CC 61 61
+ 55+  C05C CC CC A8 A0
+ 56+  C060 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 56+  C064 61 61 CC CC
+ 56+  C068 CC CC 61 61
+ 56+  C06C CC CC A8 A0
+ 57+  C070 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 57+  C074 CC CC CC CC
+ 57+  C078 CC CC CC CC
+ 57+  C07C CC CC A8 A0
+ 58+  C080 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 58+  C084 CC CC CC CC
+ 58+  C088 CC CC CC CC
+ 58+  C08C CC CC A8 A0
+ 59+  C090 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 59+  C094 CC CC CC 61
+ 59+  C098 61 CC CC CC
+ 59+  C09C CC CC A8 A0
+ 60+  C0A0 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 60+  C0A4 CC CC CC CC
+ 60+  C0A8 CC CC CC CC
+ 60+  C0AC CC CC A8 A0
+ 61+  C0B0 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 61+  C0B4 CC CC CC CC
+ 61+  C0B8 CC CC CC CC
+ 61+  C0BC CC CC A8 A0
+ 62+  C0C0 A0 A8 CC 61  	db  $A0, $A8, $CC, $61, $61, $61, $61, $61, $61, $61, $61, $61, $61, $CC, $A8, $A0;
+ 62+  C0C4 61 61 61 61
+ 62+  C0C8 61 61 61 61
+ 62+  C0CC 61 CC A8 A0
+ 63+  C0D0 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 63+  C0D4 CC CC CC CC
+ 63+  C0D8 CC CC CC CC
+ 63+  C0DC CC CC A8 A0
+ 64+  C0E0 A0 A8 A8 A8  	db  $A0, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A0;
+ 64+  C0E4 A8 A8 A8 A8
+ 64+  C0E8 A8 A8 A8 A8
+ 64+  C0EC A8 A8 A8 A0
+ 65+  C0F0 A0 A0 A0 A0  	db  $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0;
+ 65+  C0F4 A0 A0 A0 A0
+ 65+  C0F8 A0 A0 A0 A0
+ 65+  C0FC A0 A0 A0 A0
+ 66+  C100
+ 67+  C100
+ 68+  C100              ;;;;;;Fonts
+ 69+  C100
+ 70+  C100
+ 71+  C100                  MMU 6,17
+ 72+  C100              	org 0xC000
+ 73+  C000
+ 74+  C000 00 00 00...  	ds 64,0
+ 75+  C040              	; incbin "fonts/font1.spr"
+ 76+  C040              	; incbin "fonts/font2.spr"
+ 77+  C040              	; incbin "fonts/font3.spr"
+ 78+  C040              	; incbin "fonts/font4.spr"
+ 79+  C040              	; incbin "fonts/font5.spr"
+ 80+  C040              	; incbin "fonts/font6.spr"
+ 81+  C040              	incbin "fonts/font7.spr"
+ 82+  D040              	; incbin "fonts/font8.spr"
+ 83+  D040              	; incbin "fonts/font9.spr"
+ 84+  D040              	; incbin "fonts/font10.spr"
+ 85+  D040              	; incbin "fonts/font11.spr"
+ 86+  D040              	; incbin "fonts/font12.spr"
+ 87+  D040              	; incbin "fonts/font13.spr"
+ 88+  D040              	; incbin "fonts/font14.spr"
+ 89+  D040              	; incbin "fonts/font15.spr"
+ 90+  D040              	; incbin "fonts/font16.spr"
+ 91+  D040              	; ; incbin "fonts/font17.spr"
+ 92+  D040              	; incbin "fonts/font18.spr" *not mapped same as others (?)
+ 93+  D040
+ 94+  D040
+ 95+  D040
+ 96+  D040
+ 97+  D040              ; ;; Layer2
+ 98+  D040
+ 99+  D040              ; 	MMU 7 n,40
+100+  D040              ; 	org $e000
+101+  D040              ; 	incbin "assets/skybigrotated.bmp", 1078
+# file closed: src/loadbins.asm
+ 51   D040
+ 52   D040
+ 53   D040
+ 54   D040              	SAVENEX OPEN "main.nex", start , stack_top
+ 55   D040                  SAVENEX CORE 3, 0, 0
+ 56   D040                  SAVENEX CFG 0, 0
+ 57   D040              	SAVENEX AUTO
+ 58   D040                  SAVENEX CLOSE
+ 59   D040
+ 60   D040
+ 61   D040
+# file closed: src/main.asm
